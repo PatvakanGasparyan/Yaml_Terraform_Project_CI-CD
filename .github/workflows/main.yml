@@ -59,6 +59,13 @@ jobs:
               unzip -q /tmp/awscliv2.zip -d /tmp
               sudo /tmp/aws/install
             fi
+            # ── Configure AWS credentials ──
+            export AWS_ACCESS_KEY_ID="${{ secrets.IAM_ACCESS_KEY }}"
+            export AWS_SECRET_ACCESS_KEY="${{ secrets.IAM_SECRET_KEY }}"
+            export AWS_DEFAULT_REGION="us-east-1"
+            
+            echo "Testing AWS credentials..."
+            aws sts get-caller-identity
             
             # ── Download .env from S3 ──
             echo "Downloading .env from S3..."
