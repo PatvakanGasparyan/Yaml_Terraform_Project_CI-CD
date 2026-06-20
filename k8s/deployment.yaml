@@ -1,0 +1,267 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: iac-platform
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: iac-config
+  namespace: iac-platform
+data:
+  NODE_ENV: production
+  API_PREFIX: api/v1
+  DB_HOST: iac-mysql
+  DB_PORT: "3306"
+  DB_DATABASE: iac_platform
+  REDIS_HOST: iac-redis
+  REDIS_PORT: "6379"
+  STORAGE_TYPE: local
+  STORAGE_LOCAL_PATH: /app/uploads
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: iac-secrets
+  namespace: iac-platform
+type: Opaque
+stringData:
+  DB_USERNAME: iac_user
+  DB_PASSWORD: change-me-in-production
+  JWT_SECRET: change-me-to-secure-random-string
+  JWT_REFRESH_SECRET: change-me-refresh-secret
+  OPENAI_API_KEY: ""
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: iac-mysql
+  namespace: iac-platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: iac-mysql
+  template:
+    metadata:
+      labels:
+        app: iac-mysql
+    spec:
+      containers:
+        - name: mysql
+          image: mysql:8.0
+          ports:
+            - containerPort: 3306
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: iac-secrets
+                  key: DB_PASSWORD
+            - name: MYSQL_DATABASE
+              valueFrom:
+                configMapKeyRef:
+                  name: iac-config
+                  key: DB_DATABASE
+            - name: MYSQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: iac-secrets
+                  key: DB_USERNAME
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: iac-secrets
+                  key: DB_PASSWORD
+          volumeMounts:
+            - name: mysql-data
+              mountPath: /var/lib/mysql
+      volumes:
+        - name: mysql-data
+          persistentVolumeClaim:
+            claimName: mysql-pvc
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mysql-pvc
+  namespace: iac-platform
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: iac-mysql
+  namespace: iac-platform
+spec:
+  selector:
+    app: iac-mysql
+  ports:
+    - port: 3306
+      targetPort: 3306
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: iac-redis
+  namespace: iac-platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: iac-redis
+  template:
+    metadata:
+      labels:
+        app: iac-redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+            - containerPort: 6379
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: iac-redis
+  namespace: iac-platform
+spec:
+  selector:
+    app: iac-redis
+  ports:
+    - port: 6379
+      targetPort: 6379
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: iac-backend
+  namespace: iac-platform
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: iac-backend
+  template:
+    metadata:
+      labels:
+        app: iac-backend
+    spec:
+      containers:
+        - name: backend
+          image: iac-platform-backend:latest
+          ports:
+            - containerPort: 4000
+          envFrom:
+            - configMapRef:
+                name: iac-config
+            - secretRef:
+                name: iac-secrets
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          livenessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: 4000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: 4000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: iac-backend
+  namespace: iac-platform
+spec:
+  selector:
+    app: iac-backend
+  ports:
+    - port: 4000
+      targetPort: 4000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: iac-frontend
+  namespace: iac-platform
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: iac-frontend
+  template:
+    metadata:
+      labels:
+        app: iac-frontend
+    spec:
+      containers:
+        - name: frontend
+          image: iac-platform-frontend:latest
+          ports:
+            - containerPort: 3000
+          env:
+            - name: NEXT_PUBLIC_API_URL
+              value: http://iac-backend:4000/api/v1
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "250m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: iac-frontend
+  namespace: iac-platform
+spec:
+  selector:
+    app: iac-frontend
+  ports:
+    - port: 80
+      targetPort: 3000
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: iac-ingress
+  namespace: iac-platform
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: iac-platform.example.com
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: iac-backend
+                port:
+                  number: 4000
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: iac-frontend
+                port:
+                  number: 80

@@ -1,0 +1,27 @@
+{
+  "name": "iac-platform",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Enterprise AI-Powered YAML & Terraform Validation Platform",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:backend": "npm run start:dev -w @iac-platform/backend",
+    "dev:frontend": "npm run dev -w @iac-platform/frontend",
+    "build": "npm run build -w @iac-platform/shared && npm run build -w @iac-platform/backend && npm run build -w @iac-platform/frontend",
+    "start": "npm run start:prod -w @iac-platform/backend",
+    "migration:run": "npm run migration:run -w @iac-platform/backend",
+    "migration:generate": "npm run migration:generate -w @iac-platform/backend",
+    "lint": "npm run lint -w @iac-platform/backend && npm run lint -w @iac-platform/frontend",
+    "test": "npm run test -w @iac-platform/backend"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

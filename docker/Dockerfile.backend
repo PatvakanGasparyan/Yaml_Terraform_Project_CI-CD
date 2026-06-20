@@ -1,0 +1,41 @@
+# Multi-stage build for NestJS backend
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+COPY package.json package-lock.json* ./
+COPY apps/backend/package.json ./apps/backend/
+COPY packages/shared/package.json ./packages/shared/
+
+RUN npm install --workspace=@iac-platform/backend --workspace=@iac-platform/shared --include-workspace-root
+
+COPY packages/shared ./packages/shared
+COPY apps/backend ./apps/backend
+COPY tsconfig.json ./
+
+RUN npm run build -w @iac-platform/shared
+RUN npm run build -w @iac-platform/backend
+
+FROM node:20-alpine AS runner
+
+WORKDIR /app
+
+ENV NODE_ENV=production
+
+RUN addgroup --system --gid 1001 nodejs && \
+    adduser --system --uid 1001 nestjs
+
+COPY --from=builder /app/package.json ./
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/apps/backend/dist ./apps/backend/dist
+COPY --from=builder /app/apps/backend/package.json ./apps/backend/
+COPY --from=builder /app/packages/shared/dist ./packages/shared/dist
+COPY --from=builder /app/packages/shared/package.json ./packages/shared/
+
+RUN mkdir -p /app/uploads && chown -R nestjs:nodejs /app/uploads
+
+USER nestjs
+
+EXPOSE 4000
+
+CMD ["node", "apps/backend/dist/main.js"]
