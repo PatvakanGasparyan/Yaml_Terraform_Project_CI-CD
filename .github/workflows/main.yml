@@ -1,0 +1,89 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -e
+
+            # ── Install Docker if not present ──
+            if ! command -v docker &> /dev/null; then
+              echo "Installing Docker..."
+              sudo apt-get update -y
+              sudo apt-get install -y ca-certificates curl gnupg
+              sudo install -m 0755 -d /etc/apt/keyrings
+              curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+              sudo chmod a+r /etc/apt/keyrings/docker.gpg
+              echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+              sudo apt-get update -y
+              sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+              sudo systemctl enable docker
+              sudo systemctl start docker
+              sudo usermod -aG docker $USER
+            fi
+
+            # ── Ensure Docker is running ──
+            sudo systemctl start docker
+
+            # ── Clone or pull the repo ──
+            APP_DIR=~/Yaml_Terraform_Project_CI-CD
+
+            if [ -d "$APP_DIR/.git" ]; then
+              echo "Pulling latest changes..."
+              cd $APP_DIR
+              git fetch --all
+              git reset --hard origin/main
+            else
+              echo "Cloning repository..."
+              git clone https://github.com/${{ github.repository }}.git $APP_DIR
+              cd $APP_DIR
+            fi
+            # ── Install AWS CLI if needed ──
+            if ! command -v aws &> /dev/null; then
+              echo "Installing AWS CLI..."
+              sudo apt-get update -y
+              sudo apt-get install -y unzip curl
+              curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "/tmp/awscliv2.zip"
+              unzip -q /tmp/awscliv2.zip -d /tmp
+              sudo /tmp/aws/install
+            fi
+            
+            # ── Download .env from S3 ──
+            echo "Downloading .env from S3..."
+            aws s3 cp s3://terraform.yaml.bucket/.env $APP_DIR/.env
+            
+            # ── Verify .env exists ──
+            if [ ! -f "$APP_DIR/.env" ]; then
+              echo ".env file not found in S3!"
+              exit 1
+            fi
+            
+            echo ".env downloaded successfully"
+
+            # ── Remove old volume on first deploy to avoid password mismatch ──
+            cd $APP_DIR
+            sudo docker compose down --remove-orphans --volumes
+
+            # ── Build and start ──
+            sudo docker compose up --build -d
+
+
+            # ── Show running containers ──
+            sudo docker compose ps
+
+            # ── Cleanup old images ──
+            sudo docker image prune -f
+
+            echo "Deployment complete!"
